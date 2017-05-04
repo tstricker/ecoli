@@ -1,0 +1,64 @@
+---
+title: "ecoli"
+author: "stricker"
+date: "12/31/2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+e.coli analysis -- biorep2
+
+```{r cars}
+library(Mfuzz)
+library(limma)
+setwd("~/ecoli/cuffnorm_biorep13/")
+genes = read.delim(file = "genes.attr_table", header = T, as.is = T, sep = "\t", quote = "")
+gene.exp= read.table(file ="genes.fpkm_table", header = T, as.is = T, sep = "\t", quote = "")
+
+final.gene =read.table(file ="mfuzz.gene.list.txt", header = T, as.is = T, sep = "\t", quote = "")
+gene.exp1 = gene.exp[,-1]
+
+colnames(gene.exp1)=NULL
+rownames(gene.exp1)=NULL
+gene.exp1=data.matrix(gene.exp1)
+#final = rbind(gene.exp1[,1:3], gene.exp1[,4:6],gene.exp1[,7:9],gene.exp1[,10:12],gene.exp1[,13:15],gene.exp1[,16:18],gene.exp1[,19:21])
+
+final = rbind(gene.exp1[,22:24], gene.exp1[,25:27],gene.exp1[,40:42],gene.exp1[,31:33],gene.exp1[,34:36],gene.exp1[,37:39],gene.exp1[,28:30])
+
+rownames(final) = final.gene[,1]
+
+m=apply(final, 1, mean)
+m1=(log2(m+1))
+hist(m1, breaks = 300)
+high=which(m1>2)
+gene.exp3 = final[high,]
+gene.exp3 = data.matrix(gene.exp3)
+gene.exp4=(log2(gene.exp3+1))
+
+
+minimalSet <- ExpressionSet(assayData=gene.exp4)
+gene.exp5 <- standardise(minimalSet)
+m1 <- mestimate(gene.exp5)
+
+cl <- mfuzz(gene.exp5,c=8,m=4)
+mfuzz.plot(gene.exp5,cl=cl,mfrow=c(2,4))
+
+cluster = cbind(rownames(gene.exp4), cl$cluster)
+write.table(cluster, file = "~/ecoli/cuffnorm_biorep13/mfuzz.cluster.assignments.txt", quote = FALSE, sep = "\t", row.names = T, col.names = F)
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

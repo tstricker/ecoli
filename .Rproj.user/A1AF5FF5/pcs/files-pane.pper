@@ -1,0 +1,9 @@
+{
+    "path" : "~/ecoli",
+    "sortOrder" : [
+        {
+            "ascending" : true,
+            "columnIndex" : 2
+        }
+    ]
+}

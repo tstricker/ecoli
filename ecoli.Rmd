@@ -1,0 +1,506 @@
+---
+title: "ecoli"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+ecoli -- RNAseq files were aligned to genome () with bowtie. Count tables were generated using htseq with transcriptome file ()
+
+```{r }
+library("DESeq2")
+library("ggplot2")
+library("qvalue")
+library("pheatmap")
+library("RColorBrewer")
+library("sva")
+library("PoiClaClu")
+
+
+directory <- "~/ecoli/data/ecoli_count/"
+sampleFiles <- grep("count",list.files(directory),value=TRUE)
+
+sampleCondition <-read.delim(file ="data/sample.sheet.txt", header =T, as.is =T, quote ="")
+sampleTable <- data.frame(sampleName = sampleFiles,fileName = sampleFiles,condition = sampleCondition)
+ddsHTSeq <- DESeqDataSetFromHTSeqCount(sampleTable = sampleTable, directory = directory,design=~condition.Strain+condition.Time_point+condition.Strain:condition.Time_point )
+ddsHTSeq
+dds <- ddsHTSeq[ rowSums(counts(ddsHTSeq)) > 1, ]
+dds <- DESeq(dds)
+
+dds <- ddsHTSeq[ rowSums(counts(ddsHTSeq)) > 1, ]
+dds <- DESeq(dds)
+ddsTC <- DESeq(dds, test="LRT", reduced = ~ condition.Strain+condition.Time_point)
+resTC <- results(ddsTC)
+resTC$symbol <- mcols(ddsTC)$symbol
+head(resTC[order(resTC$pvalue),])
+sum(resTC$padj < 0.1, na.rm=TRUE)
+
+data <- plotCounts(ddsTC, "ABE07339-1",
+                   intgroup=c("condition.Time_point","condition.Strain"), returnData=TRUE)
+ggplot(data, aes(x=condition.Time_point, y=count, color=condition.Strain, group=condition.Strain)) + 
+  geom_point() + stat_smooth(se=FALSE,method="loess") +  scale_y_log10()
+
+```
+
+plots -- plots for all data 
+
+```{r }
+rld <- rlog(dds, blind=FALSE)
+
+sampleDists <- dist( t( assay(rld) ) )
+sampleDists
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <-paste(sampleCondition[,1],sampleCondition[,2],sampleCondition[,4], sep =".") 
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+
+poisd <- PoissonDistance(t(counts(dds)))
+
+samplePoisDistMatrix <- as.matrix( poisd$dd )
+rownames(samplePoisDistMatrix) <- paste(sampleCondition[,1],sampleCondition[,2],sampleCondition[,4], sep =".") 
+colnames(samplePoisDistMatrix) <- NULL
+pheatmap(samplePoisDistMatrix,
+         clustering_distance_rows=poisd$dd,
+         clustering_distance_cols=poisd$dd,
+         col=colors)
+
+plotPCA(rld, intgroup = c("condition.Strain", "condition.Time_point"))
+
+pcaData <- plotPCA(rld, intgroup = c( "condition.Strain", "condition.Time_point"), returnData=TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+ggplot(pcaData, aes(PC1, PC2, color=condition.Strain, shape=condition.Time_point)) + geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) +
+  coord_fixed()
+
+mdsData <- data.frame(cmdscale(sampleDistMatrix))
+mds <- cbind(mdsData, as.data.frame(colData(rld)))
+ggplot(mds, aes(X1,X2,color=condition.Strain,shape=condition.Time_point)) + geom_point(size=3) +
+  coord_fixed()
+
+mdsPoisData <- data.frame(cmdscale(samplePoisDistMatrix))
+mdsPois <- cbind(mdsPoisData, as.data.frame(colData(dds)))
+ggplot(mdsPois, aes(X1,X2,color=condition.Strain,shape=condition.Time_point)) + geom_point(size=3) +
+  coord_fixed()
+
+qs <- c(0, quantile(res$baseMean[res$baseMean > 0], 0:6/6))
+bins <- cut(res$baseMean, qs)
+levels(bins) <- paste0("~",round(signif(.5*qs[-1] + .5*qs[-length(qs)],2)))
+ratios <- tapply(res$pvalue, bins, function(p) mean(p < .05, na.rm=TRUE))
+barplot(ratios, xlab="mean normalized count", ylab="ratio of small p values")
+
+```
+mod <- model.matrix(~ dex, colData(dds))
+mod0 <- model.matrix(~ 1, colData(dds))
+Then do unsupervised svaseq 
+
+svseq <- svaseq(dat, mod, mod0, n.sv=2)
+Now use this as input to DESeq design, along with genotype
+
+dds$SV1 <- svseq$sv[,1]
+dds$SV2 <- svseq$sv[,2]
+design(dds) <- ~ genotype + SV1 + SV2 
+
+
+```{r }
+directory <- "~/ecoli/data/dpmra/"
+sampleFiles <- grep("count",list.files(directory),value=TRUE)
+
+sampleCondition <-read.delim(file ="data/sample.sheet.short.txt", header =T, as.is =T, quote ="")
+sampleTable <- data.frame(sampleName = sampleFiles,fileName = sampleFiles,condition = sampleCondition)
+ddsHTSeq <- DESeqDataSetFromHTSeqCount(sampleTable = sampleTable, directory = directory,design=~condition.Strain+condition.Time_point+ condition.Strain:condition.Time_point)
+ddsHTSeq$condition.Strain <- relevel(ddsHTSeq$condition.Strain, "WT")
+ddsHTSeq
+
+
+dds <- ddsHTSeq[ rowSums(counts(ddsHTSeq)) > 1, ]
+dds <- DESeq(dds)
+ddsTC <- DESeq(dds, test="LRT", reduced = ~ condition.Strain+condition.Time_point)
+resTC <- results(ddsTC)
+resTC$symbol <- mcols(ddsTC)$symbol
+head(resTC[order(resTC$pvalue),])
+resTCo =resTC[order(resTC$pvalue),]
+table =  unlist(resTCo@listData)
+table = matrix(table, ncol = 6 )
+rownames(table) = unlist(resTCo@rownames)
+names = c("baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj")
+colnames(table)=names
+write.table(table, file = "dmpra.tc.table.txt", quote = FALSE, row.names = TRUE, col.names = TRUE, sep = "")
+save(resTCo, file = "dmpra.tc.resTC.rda")
+
+data <- plotCounts(ddsTC, "ABE07617-1",
+                   intgroup=c("condition.Time_point","condition.Strain"), returnData=TRUE)
+ggplot(data, aes(x=condition.Time_point, y=count, color=condition.Strain, group=condition.Strain)) + 
+  geom_point() + stat_smooth(se=FALSE,method="loess") +  scale_y_log10()
+
+rld <- rlog(dds, blind=FALSE)
+sampleDists <- dist( t( assay(rld) ) )
+sampleDists
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <-paste(sampleCondition[,1],sampleCondition[,2],sampleCondition[,4], sep =".") 
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+
+poisd <- PoissonDistance(t(counts(dds)))
+
+samplePoisDistMatrix <- as.matrix( poisd$dd )
+rownames(samplePoisDistMatrix) <- paste(sampleCondition[,1],sampleCondition[,2],sampleCondition[,4], sep =".") 
+colnames(samplePoisDistMatrix) <- NULL
+pheatmap(samplePoisDistMatrix,
+         clustering_distance_rows=poisd$dd,
+         clustering_distance_cols=poisd$dd,
+         col=colors)
+
+plotPCA(rld, intgroup = c("condition.Strain", "condition.Time_point"))
+
+pcaData <- plotPCA(rld, intgroup = c( "condition.Strain", "condition.Time_point"), returnData=TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+ggplot(pcaData, aes(PC1, PC2, color=condition.Strain, shape=condition.Time_point)) + geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) +
+  coord_fixed()
+
+mdsData <- data.frame(cmdscale(sampleDistMatrix))
+mds <- cbind(mdsData, as.data.frame(colData(rld)))
+ggplot(mds, aes(X1,X2,color=condition.Strain,shape=condition.Time_point)) + geom_point(size=3) +
+  coord_fixed()
+
+mdsPoisData <- data.frame(cmdscale(samplePoisDistMatrix))
+mdsPois <- cbind(mdsPoisData, as.data.frame(colData(dds)))
+ggplot(mdsPois, aes(X1,X2,color=condition.Strain,shape=condition.Time_point)) + geom_point(size=3) +
+  coord_fixed()
+
+```
+
+dpmrb testing
+
+```{r }
+directory <- "~/ecoli/data/dpmrb/"
+sampleFiles <- grep("count",list.files(directory),value=TRUE)
+
+sampleCondition <-read.delim(file ="data/dpmrb.sample.txt", header =T, as.is =T, quote ="")
+sampleTable <- data.frame(sampleName = sampleFiles,fileName = sampleFiles,condition = sampleCondition)
+ddsHTSeq <- DESeqDataSetFromHTSeqCount(sampleTable = sampleTable, directory = directory,design=~condition.Strain+condition.Time_point+ condition.Strain:condition.Time_point)
+ddsHTSeq
+
+
+dds <- ddsHTSeq[ rowSums(counts(ddsHTSeq)) > 1, ]
+dds <- DESeq(dds)
+ddsTC <- DESeq(dds, test="LRT", reduced = ~ condition.Strain+condition.Time_point)
+resTC <- results(ddsTC)
+resTC$symbol <- mcols(ddsTC)$symbol
+head(resTC[order(resTC$pvalue),])
+
+resTCo =resTC[order(resTC$pvalue),]
+table =  unlist(resTCo@listData)
+table = matrix(table, ncol = 6 )
+rownames(table) = unlist(resTCo@rownames)
+names = c("baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj")
+colnames(table)=names
+sum(resTC$padj < 0.1, na.rm=TRUE)
+write.table(table, file = "dpmrb.tc.table.txt", quote = FALSE, row.names = TRUE, col.names = TRUE, sep = "")
+save(resTCo, file = "dpmrb.tc.resTC.rda")
+
+data <- plotCounts(ddsTC, "ABE07339-1",
+                   intgroup=c("condition.Time_point","condition.Strain"), returnData=TRUE)
+ggplot(data, aes(x=condition.Time_point, y=count, color=condition.Strain, group=condition.Strain)) + 
+  geom_point() + stat_smooth(se=FALSE,method="loess") +  scale_y_log10()
+
+rld <- rlog(dds, blind=FALSE)
+sampleDists <- dist( t( assay(rld) ) )
+sampleDists
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <-paste(sampleCondition[,1],sampleCondition[,2],sampleCondition[,4], sep =".") 
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+
+poisd <- PoissonDistance(t(counts(dds)))
+
+samplePoisDistMatrix <- as.matrix( poisd$dd )
+rownames(samplePoisDistMatrix) <- paste(sampleCondition[,1],sampleCondition[,2],sampleCondition[,4], sep =".") 
+colnames(samplePoisDistMatrix) <- NULL
+pheatmap(samplePoisDistMatrix,
+         clustering_distance_rows=poisd$dd,
+         clustering_distance_cols=poisd$dd,
+         col=colors)
+
+plotPCA(rld, intgroup = c("condition.Strain", "condition.Time_point"))
+
+pcaData <- plotPCA(rld, intgroup = c( "condition.Strain", "condition.Time_point"), returnData=TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+ggplot(pcaData, aes(PC1, PC2, color=condition.Strain, shape=condition.Time_point)) + geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) +
+  coord_fixed()
+
+mdsData <- data.frame(cmdscale(sampleDistMatrix))
+mds <- cbind(mdsData, as.data.frame(colData(rld)))
+ggplot(mds, aes(X1,X2,color=condition.Strain,shape=condition.Time_point)) + geom_point(size=3) +
+  coord_fixed()
+
+mdsPoisData <- data.frame(cmdscale(samplePoisDistMatrix))
+mdsPois <- cbind(mdsPoisData, as.data.frame(colData(dds)))
+ggplot(mdsPois, aes(X1,X2,color=condition.Strain,shape=condition.Time_point)) + geom_point(size=3) +
+  coord_fixed()
+
+```
+
+
+
+
+```{r }
+
+directory <- "~/ecoli/data/dqsec//"
+sampleFiles <- grep("count",list.files(directory),value=TRUE)
+
+sampleCondition <-read.delim(file ="data/dqsec.sample.txt", header =T, as.is =T, quote ="")
+sampleTable <- data.frame(sampleName = sampleFiles,fileName = sampleFiles,condition = sampleCondition)
+ddsHTSeq <- DESeqDataSetFromHTSeqCount(sampleTable = sampleTable, directory = directory,design=~condition.Strain+condition.Time_point+ condition.Strain:condition.Time_point)
+ddsHTSeq
+
+
+dds <- ddsHTSeq[ rowSums(counts(ddsHTSeq)) > 1, ]
+dds <- DESeq(dds)
+ddsTC <- DESeq(dds, test="LRT", reduced = ~ condition.Strain+condition.Time_point)
+resTC <- results(ddsTC)
+resTC$symbol <- mcols(ddsTC)$symbol
+head(resTC[order(resTC$pvalue),])
+
+resTCo =resTC[order(resTC$pvalue),]
+table =  unlist(resTCo@listData)
+table = matrix(table, ncol = 6 )
+rownames(table) = unlist(resTCo@rownames)
+names = c("baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj")
+colnames(table)=names
+sum(resTC$padj < 0.1, na.rm=TRUE)
+
+write.table(table, file = "dqsec.tc.table.txt", quote = FALSE, row.names = TRUE, col.names = TRUE, sep = "")
+save(resTCo, file = "dqsec.tc.resTC.rda")
+
+data <- plotCounts(ddsTC, "ABE08217-1",
+                   intgroup=c("condition.Time_point","condition.Strain"), returnData=TRUE)
+ggplot(data, aes(x=condition.Time_point, y=count, color=condition.Strain, group=condition.Strain)) + 
+  geom_point() + stat_smooth(se=FALSE,method="loess") +  scale_y_log10()
+
+rld <- rlog(dds, blind=FALSE)
+sampleDists <- dist( t( assay(rld) ) )
+sampleDists
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <-paste(sampleCondition[,1],sampleCondition[,2],sampleCondition[,4], sep =".") 
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+
+poisd <- PoissonDistance(t(counts(dds)))
+
+samplePoisDistMatrix <- as.matrix( poisd$dd )
+rownames(samplePoisDistMatrix) <- paste(sampleCondition[,1],sampleCondition[,2],sampleCondition[,4], sep =".") 
+colnames(samplePoisDistMatrix) <- NULL
+pheatmap(samplePoisDistMatrix,
+         clustering_distance_rows=poisd$dd,
+         clustering_distance_cols=poisd$dd,
+         col=colors)
+
+plotPCA(rld, intgroup = c("condition.Strain", "condition.Time_point"))
+
+pcaData <- plotPCA(rld, intgroup = c( "condition.Strain", "condition.Time_point"), returnData=TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+ggplot(pcaData, aes(PC1, PC2, color=condition.Strain, shape=condition.Time_point)) + geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) +
+  coord_fixed()
+
+mdsData <- data.frame(cmdscale(sampleDistMatrix))
+mds <- cbind(mdsData, as.data.frame(colData(rld)))
+ggplot(mds, aes(X1,X2,color=condition.Strain,shape=condition.Time_point)) + geom_point(size=3) +
+  coord_fixed()
+
+mdsPoisData <- data.frame(cmdscale(samplePoisDistMatrix))
+mdsPois <- cbind(mdsPoisData, as.data.frame(colData(dds)))
+ggplot(mdsPois, aes(X1,X2,color=condition.Strain,shape=condition.Time_point)) + geom_point(size=3) +
+  coord_fixed()
+
+```
+
+
+```{r }
+
+directory <- "~/ecoli/data/dqseb/"
+sampleFiles <- grep("count",list.files(directory),value=TRUE)
+
+sampleCondition <-read.delim(file ="data/dqseb.sample.txt", header =T, as.is =T, quote ="")
+sampleTable <- data.frame(sampleName = sampleFiles,fileName = sampleFiles,condition = sampleCondition)
+ddsHTSeq <- DESeqDataSetFromHTSeqCount(sampleTable = sampleTable, directory = directory,design=~condition.Strain+condition.Time_point+ condition.Strain:condition.Time_point)
+ddsHTSeq
+
+
+dds <- ddsHTSeq[ rowSums(counts(ddsHTSeq)) > 1, ]
+dds <- DESeq(dds)
+ddsTC <- DESeq(dds, test="LRT", reduced = ~ condition.Strain+condition.Time_point)
+resTC <- results(ddsTC)
+resTC$symbol <- mcols(ddsTC)$symbol
+head(resTC[order(resTC$pvalue),])
+
+resTCo =resTC[order(resTC$pvalue),]
+table =  unlist(resTCo@listData)
+table = matrix(table, ncol = 6 )
+rownames(table) = unlist(resTCo@rownames)
+names = c("baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj")
+colnames(table)=names
+sum(resTC$padj < 0.1, na.rm=TRUE)
+
+write.table(table, file = "dqseb.tc.table.txt", quote = FALSE, row.names = TRUE, col.names = TRUE, sep = "")
+save(resTCo, file = "dqseb.tc.resTC.rda")
+
+data <- plotCounts(ddsTC, "ABE09213-1",
+                   intgroup=c("condition.Time_point","condition.Strain"), returnData=TRUE)
+ggplot(data, aes(x=condition.Time_point, y=count, color=condition.Strain, group=condition.Strain)) + 
+  geom_point() + stat_smooth(se=FALSE,method="loess") +  scale_y_log10()
+
+rld <- rlog(dds, blind=FALSE)
+sampleDists <- dist( t( assay(rld) ) )
+sampleDists
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <-paste(sampleCondition[,1],sampleCondition[,2],sampleCondition[,4], sep =".") 
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+
+poisd <- PoissonDistance(t(counts(dds)))
+
+samplePoisDistMatrix <- as.matrix( poisd$dd )
+rownames(samplePoisDistMatrix) <- paste(sampleCondition[,1],sampleCondition[,2],sampleCondition[,4], sep =".") 
+colnames(samplePoisDistMatrix) <- NULL
+pheatmap(samplePoisDistMatrix,
+         clustering_distance_rows=poisd$dd,
+         clustering_distance_cols=poisd$dd,
+         col=colors)
+
+plotPCA(rld, intgroup = c("condition.Strain", "condition.Time_point"))
+
+pcaData <- plotPCA(rld, intgroup = c( "condition.Strain", "condition.Time_point"), returnData=TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+ggplot(pcaData, aes(PC1, PC2, color=condition.Strain, shape=condition.Time_point)) + geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) +
+  coord_fixed()
+
+mdsData <- data.frame(cmdscale(sampleDistMatrix))
+mds <- cbind(mdsData, as.data.frame(colData(rld)))
+ggplot(mds, aes(X1,X2,color=condition.Strain,shape=condition.Time_point)) + geom_point(size=3) +
+  coord_fixed()
+
+mdsPoisData <- data.frame(cmdscale(samplePoisDistMatrix))
+mdsPois <- cbind(mdsPoisData, as.data.frame(colData(dds)))
+ggplot(mdsPois, aes(X1,X2,color=condition.Strain,shape=condition.Time_point)) + geom_point(size=3) +
+  coord_fixed()
+
+```
+
+
+```{r }
+
+directory <- "~/ecoli/data/dqseBdpmrA/"
+sampleFiles <- grep("count",list.files(directory),value=TRUE)
+
+sampleCondition <-read.delim(file ="data/dqseBdpmrA/.sample.txt", header =T, as.is =T, quote ="")
+sampleTable <- data.frame(sampleName = sampleFiles,fileName = sampleFiles,condition = sampleCondition)
+ddsHTSeq <- DESeqDataSetFromHTSeqCount(sampleTable = sampleTable, directory = directory,design=~condition.Strain+condition.Time_point+ condition.Strain:condition.Time_point)
+ddsHTSeq
+
+
+dds <- ddsHTSeq[ rowSums(counts(ddsHTSeq)) > 1, ]
+dds <- DESeq(dds)
+ddsTC <- DESeq(dds, test="LRT", reduced = ~ condition.Strain+condition.Time_point)
+resTC <- results(ddsTC)
+resTC$symbol <- mcols(ddsTC)$symbol
+head(resTC[order(resTC$pvalue),])
+
+resTCo =resTC[order(resTC$pvalue),]
+table =  unlist(resTCo@listData)
+table = matrix(table, ncol = 6 )
+rownames(table) = unlist(resTCo@rownames)
+names = c("baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj")
+colnames(table)=names
+sum(resTC$padj < 0.1, na.rm=TRUE)
+
+write.table(table, file = "dqseBdpmrA.tc.table.txt", quote = FALSE, row.names = TRUE, col.names = TRUE, sep = "")
+save(resTCo, file = "dqseBdpmrA.tc.resTC.rda")
+
+data <- plotCounts(ddsTC, "ABE08217-1",
+                   intgroup=c("condition.Time_point","condition.Strain"), returnData=TRUE)
+ggplot(data, aes(x=condition.Time_point, y=count, color=condition.Strain, group=condition.Strain)) + 
+  geom_point() + stat_smooth(se=FALSE,method="loess") +  scale_y_log10()
+
+rld <- rlog(dds, blind=FALSE)
+sampleDists <- dist( t( assay(rld) ) )
+sampleDists
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <-paste(sampleCondition[,1],sampleCondition[,2],sampleCondition[,4], sep =".") 
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+
+poisd <- PoissonDistance(t(counts(dds)))
+
+samplePoisDistMatrix <- as.matrix( poisd$dd )
+rownames(samplePoisDistMatrix) <- paste(sampleCondition[,1],sampleCondition[,2],sampleCondition[,4], sep =".") 
+colnames(samplePoisDistMatrix) <- NULL
+pheatmap(samplePoisDistMatrix,
+         clustering_distance_rows=poisd$dd,
+         clustering_distance_cols=poisd$dd,
+         col=colors)
+
+plotPCA(rld, intgroup = c("condition.Strain", "condition.Time_point"))
+
+pcaData <- plotPCA(rld, intgroup = c( "condition.Strain", "condition.Time_point"), returnData=TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+ggplot(pcaData, aes(PC1, PC2, color=condition.Strain, shape=condition.Time_point)) + geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) +
+  coord_fixed()
+
+mdsData <- data.frame(cmdscale(sampleDistMatrix))
+mds <- cbind(mdsData, as.data.frame(colData(rld)))
+ggplot(mds, aes(X1,X2,color=condition.Strain,shape=condition.Time_point)) + geom_point(size=3) +
+  coord_fixed()
+
+mdsPoisData <- data.frame(cmdscale(samplePoisDistMatrix))
+mdsPois <- cbind(mdsPoisData, as.data.frame(colData(dds)))
+ggplot(mdsPois, aes(X1,X2,color=condition.Strain,shape=condition.Time_point)) + geom_point(size=3) +
+  coord_fixed()
+
+```
+
+

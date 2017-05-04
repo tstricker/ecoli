@@ -1,0 +1,31 @@
+#$/usr/bin/perl
+use warnings;
+use strict;
+use data::Dumper;
+
+my %exp;
+my @samples;
+my @files = `find //Users/tstricker/ecoli/data/count/ -name "*count"`;
+foreach my $i (0..$#files){
+    chomp $files[$i];
+    my @name = split(/\//, $files[$i]);
+    my @ID = split(/\./, $name[$#name});
+    push @samples, $ID[0];
+    open(AA, "$files[$i]")||die "Can't open $files[$i]!";
+    while(<AA>){
+	chomp $_;
+	my @temp = split(/\t/, $_);
+	$exp{$temp[0]}{$ID[0]}=$temp[6];
+    }
+}
+
+my $out_file = "/Users/tstricker/ecoli/data/count/count.matrix.txt";
+open(OUT, ">$out_file!")||die "Can't open $out_file!";
+foreach my $foo (keys %exp){
+    print "$foo\t";
+    foreach my $bar (keys %{$exp{$foo}}){
+	print "$exp{$foo}{$bar}\t";
+    }
+    print "\n";
+}
+
